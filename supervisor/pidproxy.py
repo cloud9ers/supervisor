@@ -1,12 +1,28 @@
 #!/usr/bin/env python
+##############################################################################
+#
+# Copyright (c) 2007 Agendaless Consulting and Contributors.
+# All Rights Reserved.
+#
+# This software is subject to the provisions of the BSD-like license at
+# http://www.repoze.org/LICENSE.txt.  A copy of the license should accompany
+# this distribution.  THIS SOFTWARE IS PROVIDED "AS IS" AND ANY AND ALL
+# EXPRESS OR IMPLIED WARRANTIES ARE DISCLAIMED, INCLUDING, BUT NOT LIMITED TO,
+# THE IMPLIED WARRANTIES OF TITLE, MERCHANTABILITY, AGAINST INFRINGEMENT, AND
+# FITNESS FOR A PARTICULAR PURPOSE
+#
+##############################################################################
 
 """ An executable which proxies for a subprocess; upon a signal, it sends that
-signal to the process identified by a pidfile. """
+signal to the process identified by a pidfile. Or if 'multi' is provided for
+the pidfile, then all child process are found dynamically and the signal is
+sent to each."""
 
 import os
 import sys
 import signal
 import time
+import re
 
 class PidProxy:
     pid = None
@@ -32,7 +48,7 @@ class PidProxy:
                 break
 
     def usage(self):
-        print "pidproxy.py <pidfile name> <command> [<cmdarg1> ...]"
+        print "pidproxy.py (<pidfile name>|multi) <command> [<cmdarg1> ...]"
 
     def setsignals(self):
         signal.signal(signal.SIGTERM, self.passtochild)
@@ -47,15 +63,36 @@ class PidProxy:
         pass
 
     def passtochild(self, sig, frame):
-        try:
-            pid = int(open(self.pidfile, 'r').read().strip())
-        except:
-            pid = None
-            print "Can't read child pidfile %s!" % self.pidfile
-            return
-        os.kill(pid, sig)
+        for pid in self.get_child_pids():
+            os.kill(pid, sig)  # signal/kill children
+        os.kill(self.pid, sig) # signal/kill parent
         if sig in [signal.SIGTERM, signal.SIGINT, signal.SIGQUIT]:
-            sys.exit(0)
+            sys.exit(0) # kill self (pidproxy)
+            
+    def get_child_pids(self):
+        pids = []
+        if self.pidfile == 'multi':
+            for pid in os.listdir("/proc/"):
+                if not re.match("\d+", pid):
+                    continue
+                try:
+                    f = open('/proc/%s/status' % pid)
+                    for line in f:
+                        if not line.startswith('PPid:'):
+                            continue
+                        ppid = line.split()[1].strip()
+                        if int(ppid) == self.pid:
+                            pids.append(int(pid))
+                        break
+                    f.close()
+                except IOError:
+                    pass # we can ignore race conditions
+        else:
+            try:
+                pids = [int(open(self.pidfile, 'r').read().strip())]
+            except:
+                print "Can't read child pidfile %s!" % self.pidfile
+        return pids
 
 def main():
     pp = PidProxy(sys.argv)
@@ -63,6 +100,5 @@ def main():
 
 if __name__ == '__main__':
     main()
-    
-    
-    
+
+
