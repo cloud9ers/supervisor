@@ -23,6 +23,7 @@ import sys
 import signal
 import time
 import re
+import psutil
 
 class PidProxy:
     pid = None
@@ -37,7 +38,8 @@ class PidProxy:
             sys.exit(1)
 
     def go(self):
-        self.pid = os.spawnv(os.P_NOWAIT, self.command, self.cmdargs)
+	self.pid = os.spawnv(os.P_NOWAIT, self.command, self.cmdargs)
+	self.ps = psutil.Process(self.pid)
         while 1:
             time.sleep(5)
             try:
@@ -63,38 +65,13 @@ class PidProxy:
         pass
 
     def passtochild(self, sig, frame):
-        for pid in self.get_child_pids():
+        for pid in [p.pid for p in self.ps.get_children()]:
             os.kill(pid, sig)  # signal/kill children
         os.kill(self.pid, sig) # signal/kill parent
         if sig in [signal.SIGTERM, signal.SIGINT, signal.SIGQUIT]:
             sys.exit(0) # kill self (pidproxy)
-            
-    def get_child_pids(self):
-        pids = []
-        if self.pidfile == 'multi':
-            for pid in os.listdir("/proc/"):
-                if not re.match("\d+", pid):
-                    continue
-                try:
-                    f = open('/proc/%s/status' % pid)
-                    for line in f:
-                        if not line.startswith('PPid:'):
-                            continue
-                        ppid = line.split()[1].strip()
-                        if int(ppid) == self.pid:
-                            pids.append(int(pid))
-                        break
-                    f.close()
-                except IOError:
-                    pass # we can ignore race conditions
-        else:
-            try:
-                pids = [int(open(self.pidfile, 'r').read().strip())]
-            except:
-                print "Can't read child pidfile %s!" % self.pidfile
-        return pids
-
-def main():
+    
+def main(): 
     pp = PidProxy(sys.argv)
     pp.go()
 
