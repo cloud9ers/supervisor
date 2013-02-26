@@ -1,12 +1,29 @@
 #!/usr/bin/env python
+##############################################################################
+#
+# Copyright (c) 2007 Agendaless Consulting and Contributors.
+# All Rights Reserved.
+#
+# This software is subject to the provisions of the BSD-like license at
+# http://www.repoze.org/LICENSE.txt.  A copy of the license should accompany
+# this distribution.  THIS SOFTWARE IS PROVIDED "AS IS" AND ANY AND ALL
+# EXPRESS OR IMPLIED WARRANTIES ARE DISCLAIMED, INCLUDING, BUT NOT LIMITED TO,
+# THE IMPLIED WARRANTIES OF TITLE, MERCHANTABILITY, AGAINST INFRINGEMENT, AND
+# FITNESS FOR A PARTICULAR PURPOSE
+#
+##############################################################################
 
 """ An executable which proxies for a subprocess; upon a signal, it sends that
-signal to the process identified by a pidfile. """
+signal to the process identified by a pidfile. Or if 'multi' is provided for
+the pidfile, then all child process are found dynamically and the signal is
+sent to each."""
 
 import os
 import sys
 import signal
 import time
+import re
+import psutil
 
 class PidProxy:
     pid = None
@@ -21,7 +38,8 @@ class PidProxy:
             sys.exit(1)
 
     def go(self):
-        self.pid = os.spawnv(os.P_NOWAIT, self.command, self.cmdargs)
+	self.pid = os.spawnv(os.P_NOWAIT, self.command, self.cmdargs)
+	self.ps = psutil.Process(self.pid)
         while 1:
             time.sleep(5)
             try:
@@ -32,7 +50,7 @@ class PidProxy:
                 break
 
     def usage(self):
-        print "pidproxy.py <pidfile name> <command> [<cmdarg1> ...]"
+        print "pidproxy.py (<pidfile name>|multi) <command> [<cmdarg1> ...]"
 
     def setsignals(self):
         signal.signal(signal.SIGTERM, self.passtochild)
@@ -47,22 +65,17 @@ class PidProxy:
         pass
 
     def passtochild(self, sig, frame):
-        try:
-            pid = int(open(self.pidfile, 'r').read().strip())
-        except:
-            pid = None
-            print "Can't read child pidfile %s!" % self.pidfile
-            return
-        os.kill(pid, sig)
+        for pid in [p.pid for p in self.ps.get_children()]:
+            os.kill(pid, sig)  # signal/kill children
+        os.kill(self.pid, sig) # signal/kill parent
         if sig in [signal.SIGTERM, signal.SIGINT, signal.SIGQUIT]:
-            sys.exit(0)
-
-def main():
+            sys.exit(0) # kill self (pidproxy)
+    
+def main(): 
     pp = PidProxy(sys.argv)
     pp.go()
 
 if __name__ == '__main__':
     main()
-    
-    
-    
+
+
